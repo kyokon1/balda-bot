@@ -8,7 +8,9 @@ require('dotenv').config();
 const BOT_TOKEN = process.env.BOT_TOKEN;
 const DOMAIN = process.env.WEBHOOK_DOMAIN;
 const PORT = process.env.PORT || 3000;
-const WEBHOOK_PATH = `/bot${BOT_TOKEN.split(':')[1]}`;
+const WEBHOOK_PATH = `/bot${BOT_TOKEN.split(/
+?
+/)[1]}`;
 
 // Загрузка словаря
 const words = new Set(
