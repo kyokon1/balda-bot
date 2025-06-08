@@ -10,7 +10,7 @@ const DOMAIN = process.env.WEBHOOK_DOMAIN;
 const PORT = process.env.PORT || 3000;
 const WEBHOOK_PATH = `/bot${BOT_TOKEN.split(/
 ?
-/)[1]}`;
+/)[1]}`; // Используем разделение по ':'`
 
 // Загрузка словаря
 const words = new Set(
