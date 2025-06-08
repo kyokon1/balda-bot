@@ -8,3 +8,5 @@ services:
     envVars:
       - key: BOT_TOKEN
         value: 8123011970:AAEwn4crJdc0-D6NWfZIQgL7aEbgyeCXlW8
+      - key: WEBHOOK_DOMAIN
+        value: "https://balda-bot.onrender.com
