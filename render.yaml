@@ -1,0 +1,10 @@
+services:
+  - type: web
+    name: balda-bot
+    env: node
+    plan: free
+    buildCommand: 'npm install'
+    startCommand: 'node index.js'
+    envVars:
+      - key: BOT_TOKEN
+        value: 8123011970:AAEwn4crJdc0-D6NWfZIQgL7aEbgyeCXlW8
