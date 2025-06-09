@@ -1,3 +1,4 @@
+// Улучшенный backend для игры Балда
 const express = require('express');
 const http = require('http');
 const { Server } = require('socket.io');
@@ -6,50 +7,59 @@ const bodyParser = require('body-parser');
 const { Telegraf } = require('telegraf');
 require('dotenv').config();
 
-// Telegram Bot Webhook
+// Telegram Bot Init
 const bot = new Telegraf(process.env.BOT_TOKEN);
-bot.command('start', ctx => ctx.reply('Балда',{reply_markup:{keyboard:[[{text:'Играть',web_app:{url:process.env.WEB_APP_URL}}]],resize_keyboard:true}}));
+bot.command('start', ctx => {
+  ctx.reply('Балда', {
+    reply_markup: {
+      keyboard: [[{ text: 'Играть', web_app: { url: process.env.WEB_APP_URL } }]],
+      resize_keyboard: true,
+    },
+  });
+});
 
-// Загрузка словаря для проверки слов
+// Загрузка словаря
 const words = new Set(
-  fs.readFileSync('russian.txt','utf-8')
-    .split(/
-?
-/)
+  fs.readFileSync('russian.txt', 'utf-8')
+    .split(/\r?\n/)
     .map(w => w.trim().toLowerCase())
+    .filter(Boolean)
 );
 
 const app = express();
 app.use(bodyParser.json());
-app.get('/', (req,res) => res.send('Балда API')); 
-app.post('/validate', (req,res) => { 
-  const word = (req.body.word||'').toLowerCase();
+
+app.get('/', (req, res) => res.send('Балда API'));
+
+// Валидация слова
+app.post('/validate', (req, res) => {
+  const word = (req.body.word || '').toLowerCase();
   res.json({ valid: words.has(word) });
 });
 
 const server = http.createServer(app);
 const io = new Server(server, { cors: { origin: '*' } });
 
-// Lobby and rooms
-let rooms = new Map();
-let creatorMap = new Map(); // socket.id -> roomId
-io.on('connection', socket => {
-  // Send list of rooms
-  socket.on('getRooms', () => {
-    const list = [];
-    for (let [id, r] of rooms) {
-      list.push({
-        id,
-        name: r.name,
-        size: r.size,
-        players: r.sockets.size,
-        max: r.max
-      });
-    }
-    socket.emit('rooms', list);
-  });
+// Игровые комнаты
+const rooms = new Map(); // roomId -> { name, size, max, sockets, turn }
+const creatorMap = new Map(); // socket.id -> roomId
 
-  // Create room (one per creator)
+io.on('connection', socket => {
+  // Обновить список комнат
+  const sendRoomList = () => {
+    const list = Array.from(rooms.entries()).map(([id, r]) => ({
+      id,
+      name: r.name,
+      size: r.size,
+      players: r.sockets.size,
+      max: r.max,
+    }));
+    io.emit('rooms', list);
+  };
+
+  socket.on('getRooms', sendRoomList);
+
+  // Создание комнаты
   socket.on('createRoom', data => {
     if (creatorMap.has(socket.id)) {
       socket.emit('errorMsg', 'Вы уже создали комнату');
@@ -60,61 +70,64 @@ io.on('connection', socket => {
       name: data.name,
       size: data.size,
       max: data.max,
-      sockets: new Set(),
-      turn: 1
+      sockets: new Set([socket]),
+      turn: 1,
     });
     creatorMap.set(socket.id, id);
+    socket.join(id);
     socket.emit('roomCreated');
+    sendRoomList();
   });
 
-  // Join room
+  // Подключение к комнате
   socket.on('joinRoom', data => {
     const r = rooms.get(data.room);
-    if (!r) {
-      socket.emit('errorMsg', 'Комната не найдена');
-      return;
-    }
-    if (r.sockets.size >= r.max) {
-      socket.emit('errorMsg', 'Комната полна');
-      return;
-    }
+    if (!r) return socket.emit('errorMsg', 'Комната не найдена');
+    if (r.sockets.size >= r.max) return socket.emit('errorMsg', 'Комната полна');
     r.sockets.add(socket);
     socket.join(data.room);
-    // Notify all when full
+
     if (r.sockets.size === r.max) {
       let num = 1;
-      for (let s of r.sockets) {
+      for (const s of r.sockets) {
         s.emit('paired', { room: data.room, player: num, turn: r.turn });
         num++;
       }
     }
+    sendRoomList();
   });
 
-  // Handle move (single letter or multiple moves)
+  // Ход игрока
   socket.on('move', m => {
     const r = rooms.get(m.room);
     if (!r) return;
     io.to(m.room).emit('move', m);
-    // Switch turn
     r.turn = r.turn === 1 ? 2 : 1;
     io.to(m.room).emit('turn', r.turn);
   });
 
-  // Clean up on disconnect
+  // Отключение
   socket.on('disconnect', () => {
-    if (creatorMap.has(socket.id)) {
-      const rid = creatorMap.get(socket.id);
-      rooms.delete(rid);
+    const roomId = creatorMap.get(socket.id);
+    if (roomId) {
+      rooms.delete(roomId);
       creatorMap.delete(socket.id);
-      io.emit('rooms', Array.from(rooms.entries()).map(([id, r]) => ({ id, name: r.name, size: r.size, players: r.sockets.size, max: r.max })));
+    } else {
+      // удаление из комнаты не-создателя
+      for (const [id, room] of rooms) {
+        room.sockets.delete(socket);
+        if (room.sockets.size === 0) rooms.delete(id);
+      }
     }
+    sendRoomList();
   });
 });
 
-// Telegram webhook endpoint
-app.post(`/bot${process.env.BOT_TOKEN.split(':')[1]}`, (req,res) => bot.handleUpdate(req.body, res));
+// Telegram Webhook
+const path = `/bot${process.env.BOT_TOKEN.split(':')[1]}`;
+app.post(path, (req, res) => bot.handleUpdate(req.body, res));
 (async () => {
-  await bot.telegram.setWebhook(`${process.env.WEB_APP_URL}/bot${process.env.BOT_TOKEN.split(':')[1]}`);
+  await bot.telegram.setWebhook(`${process.env.WEB_APP_URL}/${path}`);
   const PORT = process.env.PORT || 3000;
-  server.listen(PORT, () => console.log(`Listening on ${PORT}`));
+  server.listen(PORT, () => console.log(`\u{1F680} Сервер запущен на порту ${PORT}`));
 })();
