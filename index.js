@@ -106,6 +106,12 @@ io.on('connection', socket => {
     io.to(m.room).emit('turn', r.turn);
   });
 
+  // Завершение хода с выбранным словом
+  socket.on('submitWord', data => {
+    const isValid = words.has(data.word.toLowerCase());
+    io.to(data.room).emit('wordResult', { valid: isValid, word: data.word });
+  });
+
   // Отключение
   socket.on('disconnect', () => {
     const roomId = creatorMap.get(socket.id);
